@@ -1,0 +1,50 @@
+// =====================================================================
+// PASTE THIS INTO YOUR TRADINGVIEW CLUSTERS INDICATOR
+// Add this at the bottom to send webhook alerts to your Discord bot
+// =====================================================================
+// 
+// In TradingView:
+// 1. Add your Clusters indicator to chart
+// 2. Right-click → "Add Alert"
+// 3. Set condition to "Cluster Detected"
+// 4. In "Alert actions" → check "Webhook URL"
+// 5. Set URL to: http://YOUR_SERVER_IP:3000/webhook
+// 6. In "Message" field, paste the JSON below:
+//
+// For the alert message, use this format in the alert settings:
+//
+// {"type":"{{strategy.order.action}}","timeframe":"{{interval}}","priceHigh":{{high}},"priceLow":{{low}},"price":{{close}},"symbol":"{{ticker}}"}
+//
+// =====================================================================
+// OR - use this standalone alert script that monitors and sends clusters:
+// =====================================================================
+
+//@version=6
+indicator("Cluster Alert Webhook", overlay=true, scale=scale.right)
+
+string webhookMsg = input.string("", "Webhook message template (leave empty)", group="WEBHOOK")
+
+// This script creates alertconditions that fire when a new cluster is detected
+// The actual cluster detection runs in your main Clusters indicator
+// 
+// OPTION A: Use the alertcondition from your Clusters indicator directly
+//
+// OPTION B: Add this to your Clusters indicator code (before the final alerts):
+//
+// if showClusters and array.size(clusterIsBull) > 0
+//     bool lastIsBull = array.last(clusterIsBull)
+//     float lastTop = array.last(clusterTops)
+//     float lastBot = array.last(clusterBots)
+//     // Format: type|timeframe|priceHigh|priceLow|currentPrice
+//     alert(str.format('{"type":"{0}","timeframe":"{1}","priceHigh":{2},"priceLow":{3},"price":{4},"symbol":"{5}"}',
+//         lastIsBull ? "bullish" : "bearish",
+//         timeframe.period,
+//         str.tostring(lastTop),
+//         str.tostring(lastBot),
+//         str.tostring(close),
+//         syminfo.ticker), alert.freq_once_per_bar)
+
+// Simple price tracker - alerts every bar to keep price updated
+alert(str.format('{"price":{0},"symbol":"{1}"}', str.tostring(close), syminfo.ticker), alert.freq_once_per_bar)
+
+plot(close, display=display.none)

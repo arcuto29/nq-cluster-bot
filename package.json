@@ -1,0 +1,14 @@
+{
+  "name": "nq-cluster-bot",
+  "version": "2.0.0",
+  "description": "NQ Trading Discord Bot — Clusters, Single Prints, SMT, Bias, Stats",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "node bot.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.0",
+    "dotenv": "^16.4.0"
+  }
+}
