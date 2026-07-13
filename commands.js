@@ -1,11 +1,8 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { buildClusterEmbed, buildBiasEmbed } = require('./embedBuilder');
+const { buildBiasEmbed, buildTPOEmbed } = require('./embedBuilder');
 
-function registerCommands(client, store, biasEngine, config) {
+function registerCommands(client, biasEngine, tpoEngine, sessionTimer, config) {
     const commands = [
-        new SlashCommandBuilder()
-            .setName('clusters')
-            .setDescription('Show closest NQ clusters above/below price'),
         new SlashCommandBuilder()
             .setName('bias')
             .setDescription('Show daily NQ bias with factor breakdown'),
@@ -13,14 +10,19 @@ function registerCommands(client, store, biasEngine, config) {
             .setName('prints')
             .setDescription('Show active single print levels'),
         new SlashCommandBuilder()
+            .setName('tpo')
+            .setDescription('Show current TPO profile, single prints, and shape analysis'),
+        new SlashCommandBuilder()
+            .setName('sessions')
+            .setDescription('Show market session schedule and active sessions'),
+        new SlashCommandBuilder()
             .setName('stats')
-            .setDescription('Show session cluster statistics'),
+            .setDescription('Show TPO session statistics'),
         new SlashCommandBuilder()
             .setName('clear')
-            .setDescription('Clear all clusters and reset session'),
+            .setDescription('Clear all data and reset session'),
     ];
 
-    // Register slash commands
     client.once('ready', async () => {
         try {
             await client.application.commands.set(commands);
@@ -30,8 +32,6 @@ function registerCommands(client, store, biasEngine, config) {
         }
     });
 
-
-    // Handle interactions
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isChatInputCommand()) return;
 
@@ -40,48 +40,119 @@ function registerCommands(client, store, biasEngine, config) {
 
         try {
             switch (commandName) {
-                case 'clusters': {
-                    const embed = buildClusterEmbed(store, currentPrice, config.symbol, config.timezone);
-                    await interaction.reply({ embeds: [embed] });
-                    break;
-                }
                 case 'bias': {
-                    const embed = buildBiasEmbed(biasEngine, store, currentPrice, config.symbol);
+                    const embed = buildBiasEmbed(biasEngine, currentPrice, config.symbol);
                     await interaction.reply({ embeds: [embed] });
                     break;
                 }
+
+
                 case 'prints': {
-                    const { above, below } = store.getClosestPrints(currentPrice, 5);
-                    let msg = '**Active Single Prints:**\n```\n';
-                    for (const p of [...above].reverse()) {
-                        msg += `${store.formatPrice(p.price)} ↑\n`;
+                    const tpoSummary = tpoEngine.getSummary(currentPrice);
+                    const tpoPrints = tpoSummary.singlePrints;
+
+                    if (tpoPrints.length === 0) {
+                        await interaction.reply('📍 No active single prints detected yet.');
+                        break;
+                    }
+
+                    let msg = `**${config.symbol} Active Single Prints:**\n\`\`\`\n`;
+                    const spAbove = tpoPrints.filter(sp => sp.mid > currentPrice).sort((a, b) => a.mid - b.mid);
+                    const spBelow = tpoPrints.filter(sp => sp.mid <= currentPrice).sort((a, b) => b.mid - a.mid);
+
+                    for (const sp of [...spAbove].reverse()) {
+                        const dist = (sp.mid - currentPrice).toFixed(2);
+                        msg += `↑ ${sp.low.toFixed(2)} - ${sp.high.toFixed(2)} (${sp.tickCount} ticks, +${dist})\n`;
                     }
                     msg += `--- current: ${currentPrice.toFixed(2)} ---\n`;
-                    for (const p of below) {
-                        msg += `${store.formatPrice(p.price)} ↓\n`;
+                    for (const sp of spBelow) {
+                        const dist = (currentPrice - sp.mid).toFixed(2);
+                        msg += `↓ ${sp.low.toFixed(2)} - ${sp.high.toFixed(2)} (${sp.tickCount} ticks, -${dist})\n`;
                     }
-                    if (!above.length && !below.length) msg += 'No active prints.\n';
-                    msg += '```';
+                    msg += '```\n';
+
+                    // Bias interpretation
+                    const spBias = tpoEngine.getSinglePrintBias(currentPrice);
+                    if (spBias.below > spBias.above) {
+                        msg += `> 🟢 More prints **below** = support cushion = bullish lean`;
+                    } else if (spBias.above > spBias.below) {
+                        msg += `> 🔴 More prints **above** = resistance above = bearish lean`;
+                    } else {
+                        msg += `> ⚪ Prints balanced above/below = neutral`;
+                    }
+
                     await interaction.reply(msg);
                     break;
                 }
+
+                case 'tpo': {
+                    if (tpoEngine.profile.size === 0) {
+                        await interaction.reply('📊 No TPO data yet. Waiting for 30-min bars from TradingView...');
+                        break;
+                    }
+                    const embed = buildTPOEmbed(tpoEngine, currentPrice, config.symbol);
+                    await interaction.reply({ embeds: [embed] });
+                    break;
+                }
+
+                case 'sessions': {
+                    const active = sessionTimer.getActiveSessions();
+                    const upcoming = sessionTimer.getUpcoming(6);
+                    const schedule = sessionTimer.getScheduleDisplay();
+
+                    let msg = `**Market Sessions (ET)**\n\n`;
+
+                    if (active.length > 0) {
+                        msg += '**Currently Active:**\n';
+                        for (const s of active) {
+                            msg += `> ${s.emoji} ${s.name} — closes in ~${s.closesIn} min\n`;
+                        }
+                        msg += '\n';
+                    } else {
+                        msg += '> No sessions currently active\n\n';
+                    }
+
+                    if (upcoming.length > 0) {
+                        msg += '**Upcoming:**\n';
+                        for (const u of upcoming) {
+                            const typeEmoji = u.type === 'open' ? '🟢' : '🔴';
+                            msg += `> ${typeEmoji} ${u.session} ${u.type} — ${u.formattedTime} (in ${u.minutesUntil} min)\n`;
+                        }
+                        msg += '\n';
+                    }
+
+                    msg += '**Full Schedule:**\n```\n' + schedule + '\n```';
+                    await interaction.reply(msg);
+                    break;
+                }
+
                 case 'stats': {
-                    const s = store.getStats();
                     const bias = biasEngine.getBiasLabel();
+                    const tpoSummary = tpoEngine.getSummary(currentPrice);
+
                     let msg = `**${config.symbol} Session Stats:**\n`;
                     msg += `> Bias: ${bias.emoji} ${bias.label}\n`;
-                    msg += `> Clusters: ${s.active} active / ${s.total} total\n`;
-                    msg += `> Bull: ${s.bull} | Bear: ${s.bear}\n`;
-                    msg += `> Mitigated: ${s.mitigated} (Hold rate: ${s.holdRate}%)\n`;
-                    msg += `> Single Prints: ${s.activePrints} unfilled\n`;
-                    msg += `> SMT Signals: ${s.smtToday} today`;
+                    msg += `> Current Price: ${currentPrice ? currentPrice.toFixed(2) : 'N/A'}\n`;
+                    msg += `\n**TPO Stats:**\n`;
+                    msg += `> Periods: ${tpoSummary.periodsCompleted} (Letter: ${tpoSummary.currentLetter})\n`;
+                    msg += `> Shape: ${tpoSummary.shape.description || tpoSummary.shape.shape}\n`;
+                    msg += `> Single Prints: ${tpoSummary.singlePrintCount} (${tpoSummary.printsAbove} above / ${tpoSummary.printsBelow} below)\n`;
+                    if (tpoSummary.poc) msg += `> POC: ${tpoSummary.poc.toFixed(2)}\n`;
+                    if (tpoSummary.vah) msg += `> VAH: ${tpoSummary.vah.toFixed(2)}\n`;
+                    if (tpoSummary.val) msg += `> VAL: ${tpoSummary.val.toFixed(2)}\n`;
+                    if (tpoSummary.ibHigh && tpoSummary.ibLow) {
+                        msg += `> IB: ${tpoSummary.ibLow.toFixed(2)} - ${tpoSummary.ibHigh.toFixed(2)}\n`;
+                    }
+                    msg += `> Range: ${(tpoSummary.sessionLow || 0).toFixed(2)} - ${(tpoSummary.sessionHigh || 0).toFixed(2)}`;
+
                     await interaction.reply(msg);
                     break;
                 }
+
                 case 'clear': {
-                    store.clearAll();
                     biasEngine.reset();
-                    await interaction.reply('✅ All clusters, prints, and signals cleared. Session reset.');
+                    tpoEngine.reset();
+                    await interaction.reply('All TPO data, single prints, and bias reset. Fresh session started.');
                     break;
                 }
             }

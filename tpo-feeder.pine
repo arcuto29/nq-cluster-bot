@@ -1,0 +1,155 @@
+//@version=6
+indicator("TPO Feeder [NQ Cluster Bot]", overlay=true, scale=scale.right)
+
+// ==================== INPUTS ====================
+string webhookSecret = input.string("mySecretKey123", "Webhook Secret", group="WEBHOOK")
+string tz = input.string("America/New_York", "Timezone", options=["America/New_York", "America/Chicago", "UTC"], group="SESSION")
+float tickSize = input.float(0.25, "Tick Size", minval=0.01, step=0.25, group="TPO")
+int tpoPeriodMinutes = input.int(30, "TPO Period (minutes)", minval=5, maxval=60, options=[5, 15, 30, 60], group="TPO")
+bool sendOnClose = input.bool(true, "Send on bar close only", group="TPO")
+
+// ==================== SESSION DETECTION ====================
+// RTH: 9:30 AM - 4:00 PM ET
+string rthSession = input.session("0930-1600", "RTH Session", group="SESSION")
+bool inRTH = not na(time(timeframe.period, rthSession, tz))
+bool rthJustOpened = inRTH and not inRTH[1]
+bool rthJustClosed = not inRTH and inRTH[1]
+
+// ==================== TPO PERIOD TRACKING ====================
+// This indicator should be applied to a 30-minute chart (or match tpoPeriodMinutes)
+// Each bar = one TPO period = one letter
+
+var int periodCount = 0
+var string currentLetter = "A"
+
+// Letters: A-Z then a-z (52 periods = 26 hours on 30min chart, more than enough)
+letterFromIndex(int idx) =>
+    if idx < 26
+        str.char(65 + idx)  // A-Z (ASCII 65-90)
+    else
+        str.char(97 + (idx - 26))  // a-z (ASCII 97-122)
+
+// Reset period count at session open
+if rthJustOpened
+    periodCount := 0
+    currentLetter := "A"
+
+// ==================== SEND TPO BAR DATA ====================
+// Every completed 30-min bar during RTH, send OHLC to the bot
+// The bot uses this to build the TPO profile and detect single prints
+
+bool shouldSend = inRTH and (sendOnClose ? barstate.isconfirmed : true)
+
+if shouldSend
+    currentLetter := letterFromIndex(periodCount)
+    
+    // Send TPO period data
+    string payload = str.format(
+         '\{"action":"tpo","letter":"{0}","high":{1},"low":{2},"open":{3},"close":{4},"period":{5},"tickSize":{6},"secret":"{7}"\}',
+         currentLetter,
+         str.tostring(high),
+         str.tostring(low),
+         str.tostring(open),
+         str.tostring(close),
+         str.tostring(periodCount),
+         str.tostring(tickSize),
+         webhookSecret)
+    
+    alert(payload, alert.freq_once_per_bar)
+    periodCount += 1
+
+// ==================== SINGLE PRINT DETECTION (Pine-side) ====================
+// Detect single prints directly in Pine for immediate alerting
+// A single print occurs when a TPO period's range doesn't overlap with adjacent periods
+// (price moved through quickly, only 1 letter at those levels)
+
+// Track prior bar ranges to detect single prints
+var float priorHigh = na
+var float priorLow = na
+
+// Check if current bar created single prints relative to prior bar
+// Single print = gap between consecutive TPO periods (no overlap zone)
+bool hasSinglePrintAbove = false
+bool hasSinglePrintBelow = false
+float spHighPrice = na
+float spLowPrice = na
+
+if inRTH and not na(priorHigh) and not na(priorLow) and barstate.isconfirmed
+    // Gap up: current low > prior high = single print zone between them
+    if low > priorHigh
+        hasSinglePrintAbove := true
+        spHighPrice := low
+        spLowPrice := priorHigh
+    
+    // Gap down: current high < prior low = single print zone between them
+    if high < priorLow
+        hasSinglePrintBelow := true
+        spHighPrice := priorLow
+        spLowPrice := high
+
+// Alert on single print detection
+if hasSinglePrintAbove
+    string spPayload = str.format(
+         '\{"action":"tpo_single_print","direction":"above","high":{0},"low":{1},"mid":{2},"letter":"{3}","secret":"{4}"\}',
+         str.tostring(spHighPrice),
+         str.tostring(spLowPrice),
+         str.tostring((spHighPrice + spLowPrice) / 2),
+         currentLetter,
+         webhookSecret)
+    alert(spPayload, alert.freq_once_per_bar)
+
+if hasSinglePrintBelow
+    string spPayload = str.format(
+         '\{"action":"tpo_single_print","direction":"below","high":{0},"low":{1},"mid":{2},"letter":"{3}","secret":"{4}"\}',
+         str.tostring(spHighPrice),
+         str.tostring(spLowPrice),
+         str.tostring((spHighPrice + spLowPrice) / 2),
+         currentLetter,
+         webhookSecret)
+    alert(spPayload, alert.freq_once_per_bar)
+
+// Update prior bar tracking
+if inRTH and barstate.isconfirmed
+    priorHigh := high
+    priorLow := low
+
+if rthJustOpened
+    priorHigh := na
+    priorLow := na
+
+// ==================== SESSION RESET ALERT ====================
+// Tell the bot to reset TPO at session open
+if rthJustOpened
+    string resetPayload = str.format(
+         '\{"action":"tpo_reset","rthOpen":{0},"secret":"{1}"\}',
+         str.tostring(open),
+         webhookSecret)
+    alert(resetPayload, alert.freq_once_per_bar)
+
+// ==================== SESSION CLOSE — SEND FINAL PROFILE ====================
+// At RTH close, send a summary so the bot can store the day's profile
+if rthJustClosed
+    string closePayload = str.format(
+         '\{"action":"tpo_session_close","sessionHigh":{0},"sessionLow":{1},"periodsCompleted":{2},"secret":"{3}"\}',
+         str.tostring(ta.highest(high, periodCount > 0 ? periodCount : 1)),
+         str.tostring(ta.lowest(low, periodCount > 0 ? periodCount : 1)),
+         str.tostring(periodCount),
+         webhookSecret)
+    alert(closePayload, alert.freq_once_per_bar)
+
+// ==================== VISUAL ====================
+// Show TPO letter labels on chart
+if inRTH and barstate.isconfirmed
+    label.new(bar_index, high, currentLetter, 
+         style=label.style_none, textcolor=color.gray, size=size.tiny)
+
+// Highlight single print zones
+bgcolor(hasSinglePrintAbove ? color.new(color.orange, 85) : na)
+bgcolor(hasSinglePrintBelow ? color.new(color.purple, 85) : na)
+
+// Show session boundaries
+bgcolor(rthJustOpened ? color.new(color.green, 90) : na)
+bgcolor(rthJustClosed ? color.new(color.red, 90) : na)
+
+// ==================== PLOTS ====================
+plot(close, display=display.none)
