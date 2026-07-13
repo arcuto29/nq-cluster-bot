@@ -32,8 +32,8 @@ Automatic Discord alerts with 5-minute warnings:
 
 | Session | Open (PST) | Close (PST) |
 |---------|-----------|------------|
-| Asia (Tokyo) | 4:00 PM | 1:00 AM |
-| London | 12:00 AM | 9:00 AM |
+| Asia (Tokyo) | 3:00 PM | 12:00 AM |
+| London | 12:00 AM | 8:30 AM |
 | New York RTH | 6:30 AM | 1:00 PM |
 | CME Futures | 3:00 PM | 2:00 PM |
 

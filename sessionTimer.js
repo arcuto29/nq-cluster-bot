@@ -2,10 +2,10 @@
  * SessionTimer — Schedules alerts for market session opens/closes
  * 
  * Sessions tracked (all times in PST / America/Los_Angeles) — FUTURES ONLY:
- * - Asia (Tokyo):  4:00 PM – 1:00 AM PST
- * - London:        12:00 AM – 9:00 AM PST
+ * - Asia (Tokyo):  3:00 PM – 12:00 AM PST
+ * - London:        12:00 AM – 8:30 AM PST
  * - New York RTH:  6:30 AM – 1:00 PM PST
- * - CME Futures:   3:00 PM – 2:00 PM PST (next day, ~23h with 1hr break)
+ * - CME Futures:   3:00 PM – 2:00 PM PST (next day)
  */
 
 const { EventEmitter } = require('events');
@@ -23,8 +23,8 @@ class SessionTimer extends EventEmitter {
             {
                 name: 'Asia (Tokyo)',
                 emoji: '🇯🇵',
-                openHour: 16, openMin: 0,    // 4:00 PM PST
-                closeHour: 1, closeMin: 0,   // 1:00 AM PST (next day)
+                openHour: 15, openMin: 0,    // 3:00 PM PST
+                closeHour: 0, closeMin: 0,   // 12:00 AM PST (midnight)
                 crossesMidnight: true,
                 color: 0xFFA726,             // Orange
             },
@@ -32,7 +32,7 @@ class SessionTimer extends EventEmitter {
                 name: 'London',
                 emoji: '🇬🇧',
                 openHour: 0, openMin: 0,     // 12:00 AM PST
-                closeHour: 9, closeMin: 0,   // 9:00 AM PST
+                closeHour: 8, closeMin: 30,  // 8:30 AM PST
                 crossesMidnight: false,
                 color: 0x42A5F5,             // Blue
             },
@@ -47,8 +47,8 @@ class SessionTimer extends EventEmitter {
             {
                 name: 'CME Futures',
                 emoji: '📈',
-                openHour: 15, openMin: 0,    // 3:00 PM PST
-                closeHour: 14, closeMin: 0,  // 2:00 PM PST (next day)
+                openHour: 15, openMin: 0,    // 3:00 PM PST (Sun)
+                closeHour: 14, closeMin: 0,  // 2:00 PM PST (Fri)
                 crossesMidnight: true,
                 color: 0xAB47BC,             // Purple
             },
