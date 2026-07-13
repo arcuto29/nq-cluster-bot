@@ -8,12 +8,9 @@ const http = require('http');
  *   GET /health — health check
  * 
  * Payload types:
- *   Cluster:          { action: "cluster", type, timeframe, priceHigh, priceLow }
- *   Print:            { action: "print", price, timeframe }
- *   SMT:              { action: "smt", type, price }
  *   Price:            { action: "price", price }
  *   Bias:             { action: "bias", poc, vah, val, overnightHigh, ... }
- *   TPO Bar:          { action: "tpo", letter, high, low, open, close, period, tickSize }
+ *   TPO Bar:          { action: "tpo", letter, high, low, open, close, period }
  *   TPO Single Print: { action: "tpo_single_print", direction, high, low, mid, letter }
  *   TPO Reset:        { action: "tpo_reset", rthOpen }
  *   TPO Session Close:{ action: "tpo_session_close", sessionHigh, sessionLow, periodsCompleted }
@@ -42,27 +39,9 @@ class WebhookServer {
                             return;
                         }
 
-                        const action = data.action || 'cluster';
+                        const action = data.action || 'price';
 
                         switch (action) {
-                            case 'cluster':
-                                if (data.type && data.priceHigh && data.priceLow) {
-                                    this.handlers.onCluster(data);
-                                }
-                                break;
-
-                            case 'print':
-                                if (data.price) {
-                                    this.handlers.onPrint(data);
-                                }
-                                break;
-
-                            case 'smt':
-                                if (data.type && data.price) {
-                                    this.handlers.onSMT(data);
-                                }
-                                break;
-
                             case 'price':
                                 if (data.price) {
                                     this.handlers.onPrice(parseFloat(data.price));
@@ -71,9 +50,12 @@ class WebhookServer {
 
                             case 'bias':
                                 this.handlers.onBias(data);
+                                // Also update price if included
+                                if (data.price) {
+                                    this.handlers.onPrice(parseFloat(data.price));
+                                }
                                 break;
 
-                            // ========== TPO ACTIONS ==========
                             case 'tpo':
                                 if (data.high && data.low) {
                                     this.handlers.onTPO(data);
@@ -95,10 +77,7 @@ class WebhookServer {
                                 break;
 
                             default:
-                                // Legacy format (no action field)
-                                if (data.type && data.priceHigh) {
-                                    this.handlers.onCluster(data);
-                                }
+                                // Unknown action — try to extract price at minimum
                                 if (data.price) {
                                     this.handlers.onPrice(parseFloat(data.price));
                                 }

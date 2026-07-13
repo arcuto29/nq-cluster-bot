@@ -1,40 +1,10 @@
 const { EmbedBuilder } = require('discord.js');
 
-// ==================== CLUSTER EMBED ====================
-function buildClusterEmbed(store, currentPrice, symbol, timezone) {
-    const { above, below } = store.getClosestClusters(currentPrice, 5);
-    let list = '';
-    const aboveReversed = [...above].reverse();
-    for (const c of aboveReversed) {
-        const emoji = c.type === 'bearish' ? '🟥' : '🟩';
-        const time = store.formatTime(c.timestamp);
-        list += `${time} | ${emoji} | ${store.formatPrice(c.priceLow)} - ${store.formatPrice(c.priceHigh)} | ${c.timeframe}\n`;
-    }
-    list += `  ~~~~~~~~~~~~~ current price ~~~~~~~~~~~~~\n`;
-    for (const c of below) {
-        const emoji = c.type === 'bearish' ? '🟥' : '🟩';
-        const time = store.formatTime(c.timestamp);
-        list += `${time} | ${emoji} | ${store.formatPrice(c.priceLow)} - ${store.formatPrice(c.priceHigh)} | ${c.timeframe}\n`;
-    }
-    if (!above.length && !below.length) list = 'No active clusters yet.\n';
-
-    const now = new Intl.DateTimeFormat('en-US', {
-        timeZone: timezone, month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', hour12: true
-    }).format(new Date());
-
-    return new EmbedBuilder()
-        .setColor(0x2f3136)
-        .setDescription(`**Closest clusters:**\n\`\`\`\n${list}\`\`\``)
-        .setFooter({ text: `Last update: ${now}` });
-}
-
 // ==================== BIAS EMBED ====================
-function buildBiasEmbed(biasEngine, store, currentPrice, symbol) {
+function buildBiasEmbed(biasEngine, currentPrice, symbol) {
     const bias = biasEngine.getBiasLabel();
     const score = biasEngine.calculateBias();
     const breakdown = biasEngine.getBreakdown();
-    const stats = store.getStats();
 
     let breakdownText = '';
     for (const f of breakdown) {
@@ -51,13 +21,13 @@ function buildBiasEmbed(biasEngine, store, currentPrice, symbol) {
         .setDescription(`\`\`\`\n${scoreBar}\n\`\`\``)
         .addFields(
             { name: 'Bias Factors', value: breakdownText, inline: false },
-            { name: 'Session Stats', value: `Clusters: ${stats.active} active (${stats.bull}B/${stats.bear}S)\nPrints: ${stats.activePrints} unfilled\nSMT: ${stats.smtToday} signals\nHold Rate: ${stats.holdRate}%`, inline: true },
-            { name: 'Price', value: `Current: ${currentPrice.toFixed(2)}`, inline: true }
+            { name: 'Price', value: `Current: ${currentPrice ? currentPrice.toFixed(2) : 'N/A'}`, inline: true }
         )
         .setTimestamp();
 
     return embed;
 }
+
 
 function buildScoreBar(score) {
     const total = 20;
@@ -81,12 +51,12 @@ function buildTPOEmbed(tpoEngine, currentPrice, symbol) {
 
     // Determine embed color from TPO bias
     let color = 0x9E9E9E; // neutral gray
-    if (tpoBias.score > 0.3) color = 0x4CAF50;      // green
-    else if (tpoBias.score > 0.1) color = 0x81C784;  // light green
-    else if (tpoBias.score < -0.3) color = 0xFF5252;  // red
-    else if (tpoBias.score < -0.1) color = 0xEF9A9A; // light red
+    if (tpoBias.score > 0.3) color = 0x4CAF50;
+    else if (tpoBias.score > 0.1) color = 0x81C784;
+    else if (tpoBias.score < -0.3) color = 0xFF5252;
+    else if (tpoBias.score < -0.1) color = 0xEF9A9A;
 
-    // Build mini TPO profile display (compact for Discord)
+    // Build mini TPO profile display
     let profileText = tpoEngine.getProfileDisplay(currentPrice, 20);
     if (profileText.length > 1000) {
         profileText = profileText.substring(0, 997) + '...';
@@ -114,6 +84,7 @@ function buildTPOEmbed(tpoEngine, currentPrice, symbol) {
     if (summary.ibLow) levelsText += `IB Low: ${summary.ibLow.toFixed(2)}`;
     if (!levelsText) levelsText = 'Building...';
 
+
     // Shape & bias info
     const shapeEmoji = shape.bias > 0.1 ? '🟢' : shape.bias < -0.1 ? '🔴' : '⚪';
     const biasLabel = tpoBias.score > 0.3 ? 'BULLISH' : tpoBias.score > 0.1 ? 'Lean Bull' :
@@ -140,7 +111,7 @@ function buildTPOSinglePrintAlert(singlePrint, isFilled, symbol) {
     if (isFilled) {
         return {
             embeds: [new EmbedBuilder()
-                .setColor(0xFFA726) // orange
+                .setColor(0xFFA726)
                 .setTitle(`📍 Single Print FILLED`)
                 .setDescription(`**${symbol}** price traded through single print zone\n\`${singlePrint.low.toFixed(2)} - ${singlePrint.high.toFixed(2)}\``)
                 .setFooter({ text: `Letter: ${singlePrint.letter || '?'} | ${singlePrint.tickCount || '?'} ticks` })
@@ -149,7 +120,6 @@ function buildTPOSinglePrintAlert(singlePrint, isFilled, symbol) {
         };
     }
 
-    // New single print detected
     const dirEmoji = singlePrint.direction === 'above' ? '⬆️' : singlePrint.direction === 'below' ? '⬇️' : '📊';
     const dirLabel = singlePrint.direction === 'above' ? 'ABOVE (resistance)' :
                      singlePrint.direction === 'below' ? 'BELOW (support)' : 'detected';
@@ -160,12 +130,10 @@ function buildTPOSinglePrintAlert(singlePrint, isFilled, symbol) {
             .setTitle(`${dirEmoji} New Single Print ${dirLabel}`)
             .setDescription(
                 `**${symbol}** single print zone:\n` +
-                `\`\`\`\n` +
-                `High:  ${singlePrint.high.toFixed(2)}\n` +
+                `\`\`\`\nHigh:  ${singlePrint.high.toFixed(2)}\n` +
                 `Mid:   ${singlePrint.mid.toFixed(2)}\n` +
                 `Low:   ${singlePrint.low.toFixed(2)}\n` +
-                `Ticks: ${singlePrint.tickCount || '?'}\n` +
-                `\`\`\`\n` +
+                `Ticks: ${singlePrint.tickCount || '?'}\n\`\`\`\n` +
                 `> Single prints mark areas of rapid price movement.\n` +
                 `> Price tends to revisit and fill these zones.`
             )
@@ -175,15 +143,15 @@ function buildTPOSinglePrintAlert(singlePrint, isFilled, symbol) {
     };
 }
 
+
 // ==================== SESSION OPEN/CLOSE ALERTS ====================
 function buildSessionAlert(event) {
     const { session, emoji, type, color, minutesWarning } = event;
 
-    // Warning alerts (5 min before)
     if (type === 'warning') {
         return {
             embeds: [new EmbedBuilder()
-                .setColor(0xFFEB3B) // yellow
+                .setColor(0xFFEB3B)
                 .setTitle(`⏰ ${emoji} ${session} opens in ${minutesWarning} minutes`)
                 .setDescription(`Prepare for session open volatility.`)
                 .setTimestamp()
@@ -202,7 +170,6 @@ function buildSessionAlert(event) {
         };
     }
 
-    // Open alert
     if (type === 'open') {
         return {
             embeds: [new EmbedBuilder()
@@ -217,7 +184,6 @@ function buildSessionAlert(event) {
         };
     }
 
-    // Close alert
     if (type === 'close') {
         return {
             embeds: [new EmbedBuilder()
@@ -232,13 +198,9 @@ function buildSessionAlert(event) {
         };
     }
 
-    // Fallback
-    return `${emoji} ${session} — ${type}`;
+    return { content: `${emoji} ${session} — ${type}` };
 }
 
-/**
- * Get contextual trading tips for session transitions
- */
 function getSessionTip(session, type) {
     const tips = {
         'Asia (Tokyo)': {
@@ -251,49 +213,23 @@ function getSessionTip(session, type) {
         },
         'New York (RTH)': {
             open: '> RTH open — highest volume period begins.\n> Watch IB (first hour) for range context.\n> Opening drive direction often sets the tone.',
-            close: '> RTH closed. Regular session complete.\n> Review TPO profile shape for tomorrow\'s bias.\n> Note: ETH continues after hours.',
+            close: '> RTH closed. Regular session complete.\n> Review TPO profile shape for tomorrow\'s bias.',
         },
         'CME Futures Open': {
             open: '> Futures market reopened.\n> Watch for gap fills from prior close.',
-            close: '> CME daily maintenance break (5:00-6:00 PM ET).\n> Positions carry into next session.',
+            close: '> CME daily maintenance break (5:00-6:00 PM ET).',
         },
         'Pre-Market (Equities)': {
             open: '> Pre-market open. Thin liquidity.\n> Watch for news-driven moves.',
             close: '> Pre-market ending. RTH opens shortly.',
         },
     };
-
     return tips[session]?.[type] || '> Monitor price action around this transition.';
-}
-
-// ==================== ORIGINAL ALERTS ====================
-function buildAlertMessage(cluster, store) {
-    const time = store.formatTime(cluster.timestamp);
-    const range = `${store.formatPrice(cluster.priceLow)} - ${store.formatPrice(cluster.priceHigh)}`;
-    return `New ${cluster.type} ${cluster.timeframe} cluster | ${time} | ${range}`;
-}
-
-function buildSMTAlert(smt, store) {
-    const time = store.formatTime(smt.timestamp);
-    const emoji = smt.type === 'bullish' ? '🟢' : '🔴';
-    return `${emoji} SMT ${smt.type} divergence | ${time} | Price: ${store.formatPrice(smt.price)}`;
-}
-
-function buildPrintAlert(print, isFilled, store) {
-    const time = store.formatTime(print.timestamp);
-    if (isFilled) {
-        return `📍 Single print **filled** at ${store.formatPrice(print.price)}`;
-    }
-    return `📊 New single print level: ${store.formatPrice(print.price)}`;
 }
 
 // ==================== EXPORTS ====================
 module.exports = {
-    buildClusterEmbed,
     buildBiasEmbed,
-    buildAlertMessage,
-    buildSMTAlert,
-    buildPrintAlert,
     buildTPOEmbed,
     buildTPOSinglePrintAlert,
     buildSessionAlert,

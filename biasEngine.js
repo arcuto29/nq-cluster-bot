@@ -1,20 +1,17 @@
 /**
- * BiasEngine — Determines daily NQ bias using multiple factors
+ * BiasEngine — Determines daily NQ bias using TPO + market structure factors
  * 
  * Scores from -1 (strong bearish) to +1 (strong bullish)
  * Updated in real-time as new data comes in
  * 
  * Factors:
- * - Overnight positioning (price vs overnight midpoint)
- * - Opening drive direction (first 15 min)
- * - Volume delta (buy vs sell aggression)
- * - Cluster balance (bull clusters below / bear above)
- * - Print balance (single prints above/below)
- * - Prior day close vs Value Area
- * - SMT divergence signals
- * - TPO profile shape (b/p/D/B)
- * - TPO single print positioning
- * - Initial Balance extension
+ * 1. Overnight positioning (price vs overnight midpoint)
+ * 2. Opening drive direction (first 15 min)
+ * 3. Volume delta (buy vs sell aggression)
+ * 4. TPO profile shape (b/p/D/B)
+ * 5. TPO single print positioning (above/below price)
+ * 6. Initial Balance extension
+ * 7. Prior day close vs Value Area
  */
 class BiasEngine {
     constructor(config) {
@@ -59,18 +56,6 @@ class BiasEngine {
         this.totalBuyVol = 0;
         this.totalSellVol = 0;
 
-        // Cluster balance
-        this.bullClustersBelow = 0;
-        this.bearClustersAbove = 0;
-
-        // Print balance
-        this.printsAbove = 0;
-        this.printsBelow = 0;
-
-        // SMT
-        this.smtBullSignals = 0;
-        this.smtBearSignals = 0;
-
         // TPO-derived bias data (cached from tpoEngine)
         this.tpoShapeBias = 0;
         this.tpoPrintBias = 0;
@@ -88,44 +73,57 @@ class BiasEngine {
     }
 
     /**
+     * Reset only TPO-related cached data (on session reset)
+     */
+    resetTPOData() {
+        this.tpoShapeBias = 0;
+        this.tpoPrintBias = 0;
+        this.tpoIBBias = 0;
+        this.tpoShape = null;
+        this.tpoSinglePrintsAbove = 0;
+        this.tpoSinglePrintsBelow = 0;
+        this.ibPosition = 'forming';
+    }
+
+    /**
      * Set prior day reference levels (from TradingView webhook)
      */
     setPriorDayLevels(data) {
-        if (data.poc) this.priorDayPOC = data.poc;
-        if (data.vah) this.priorDayVAH = data.vah;
-        if (data.val) this.priorDayVAL = data.val;
-        if (data.close) this.priorDayClose = data.close;
+        if (data.poc) this.priorDayPOC = parseFloat(data.poc);
+        if (data.vah) this.priorDayVAH = parseFloat(data.vah);
+        if (data.val) this.priorDayVAL = parseFloat(data.val);
+        if (data.close) this.priorDayClose = parseFloat(data.close);
     }
 
     /**
      * Set overnight range
      */
     setOvernightRange(high, low) {
-        this.overnightHigh = high;
-        this.overnightLow = low;
-        this.overnightMid = (high + low) / 2;
+        this.overnightHigh = parseFloat(high);
+        this.overnightLow = parseFloat(low);
+        this.overnightMid = (this.overnightHigh + this.overnightLow) / 2;
     }
 
     /**
      * Called at RTH open
      */
     setRTHOpen(price) {
-        this.rthOpenPrice = price;
+        this.rthOpenPrice = parseFloat(price);
     }
 
     /**
      * Update with opening drive data (first 15 min)
      */
     setOpeningDrive(high, low, closePrice) {
-        this.first15minHigh = high;
-        this.first15minLow = low;
-        this.first15minClose = closePrice;
+        this.first15minHigh = parseFloat(high);
+        this.first15minLow = parseFloat(low);
+        this.first15minClose = parseFloat(closePrice);
         this.openingDriveComplete = true;
 
-        if (this.priorDayPOC) {
-            this.openingDriveDirection = closePrice > this.priorDayPOC ? 1 : closePrice < this.priorDayPOC ? -1 : 0;
-        } else {
-            this.openingDriveDirection = closePrice > this.rthOpenPrice ? 1 : -1;
+        if (this.rthOpenPrice) {
+            this.openingDriveDirection = this.first15minClose > this.rthOpenPrice ? 1 : this.first15minClose < this.rthOpenPrice ? -1 : 0;
+        } else if (this.priorDayPOC) {
+            this.openingDriveDirection = this.first15minClose > this.priorDayPOC ? 1 : this.first15minClose < this.priorDayPOC ? -1 : 0;
         }
     }
 
@@ -133,39 +131,15 @@ class BiasEngine {
      * Update volume delta
      */
     updateDelta(buyVol, sellVol) {
-        this.totalBuyVol += buyVol;
-        this.totalSellVol += sellVol;
-    }
-
-    /**
-     * Update cluster balance
-     */
-    updateClusters(bullBelow, bearAbove) {
-        this.bullClustersBelow = bullBelow;
-        this.bearClustersAbove = bearAbove;
-    }
-
-    /**
-     * Update print balance
-     */
-    updatePrints(above, below) {
-        this.printsAbove = above;
-        this.printsBelow = below;
-    }
-
-    /**
-     * Register SMT signal
-     */
-    addSMTSignal(type) {
-        if (type === 'bullish') this.smtBullSignals++;
-        if (type === 'bearish') this.smtBearSignals++;
+        this.totalBuyVol += parseFloat(buyVol);
+        this.totalSellVol += parseFloat(sellVol);
     }
 
     /**
      * Update current price and refresh TPO bias data
      */
     updatePrice(price) {
-        this.currentPrice = price;
+        this.currentPrice = parseFloat(price);
         this._updateTPOBias();
     }
 
@@ -197,7 +171,15 @@ class BiasEngine {
 
     /**
      * Calculate overall bias score (-1 to +1)
-     * Now includes TPO shape, single print positioning, and IB extension
+     * 
+     * Factors:
+     * 1. Overnight positioning (20%)
+     * 2. Opening drive (18%)
+     * 3. Volume delta (15%)
+     * 4. TPO Profile Shape (18%)
+     * 5. TPO Single Print Positioning (14%)
+     * 6. IB Extension (10%)
+     * 7. Prior day close vs VA (5%)
      */
     calculateBias() {
         let score = 0;
@@ -205,12 +187,12 @@ class BiasEngine {
         // 1. Overnight positioning
         if (this.overnightMid && this.currentPrice) {
             const overnightScore = this.currentPrice > this.overnightMid ? 1 : -1;
-            score += overnightScore * this.weights.overnightWeight;
+            score += overnightScore * (this.weights.overnightWeight || 0.20);
         }
 
         // 2. Opening drive
         if (this.openingDriveComplete) {
-            score += this.openingDriveDirection * this.weights.openingDriveWeight;
+            score += this.openingDriveDirection * (this.weights.openingDriveWeight || 0.18);
         }
 
         // 3. Delta (buy vs sell aggression)
@@ -218,52 +200,30 @@ class BiasEngine {
         if (totalVol > 0) {
             const buyPct = this.totalBuyVol / totalVol;
             const deltaScore = (buyPct - 0.5) * 2; // Normalize to -1 to +1
-            score += Math.max(-1, Math.min(1, deltaScore)) * this.weights.deltaWeight;
+            score += Math.max(-1, Math.min(1, deltaScore)) * (this.weights.deltaWeight || 0.15);
         }
 
-        // 4. Cluster balance
-        const totalClusters = this.bullClustersBelow + this.bearClustersAbove;
-        if (totalClusters > 0) {
-            const clusterScore = (this.bullClustersBelow - this.bearClustersAbove) / totalClusters;
-            score += clusterScore * this.weights.clusterBalanceWeight;
+        // 4. TPO Profile Shape (b-shape bullish, p-shape bearish)
+        if (this.tpoShapeBias !== 0) {
+            score += this.tpoShapeBias * (this.weights.tpoShapeWeight || 0.18);
         }
 
-        // 5. Print balance (from webhook single prints)
-        const totalPrints = this.printsAbove + this.printsBelow;
-        if (totalPrints > 0) {
-            const printScore = (this.printsBelow - this.printsAbove) / totalPrints;
-            score += printScore * this.weights.printBalanceWeight;
+        // 5. TPO Single Print Positioning
+        if (this.tpoPrintBias !== 0) {
+            score += this.tpoPrintBias * (this.weights.tpoSinglePrintWeight || 0.14);
         }
 
-        // 6. Prior day close relative to VA
+        // 6. IB Extension
+        if (this.tpoIBBias !== 0) {
+            score += this.tpoIBBias * (this.weights.tpoIBWeight || 0.10);
+        }
+
+        // 7. Prior day close relative to VA
         if (this.priorDayClose && this.priorDayVAH && this.priorDayVAL) {
             let priorScore = 0;
             if (this.priorDayClose > this.priorDayVAH) priorScore = 1;
             else if (this.priorDayClose < this.priorDayVAL) priorScore = -1;
-            else priorScore = 0;
-            score += priorScore * this.weights.priorDayWeight;
-        }
-
-        // 7. SMT signals
-        const totalSMT = this.smtBullSignals + this.smtBearSignals;
-        if (totalSMT > 0) {
-            const smtScore = (this.smtBullSignals - this.smtBearSignals) / totalSMT;
-            score += smtScore * this.weights.smtWeight;
-        }
-
-        // 8. TPO Profile Shape (b-shape bullish, p-shape bearish)
-        if (this.tpoShapeBias !== 0) {
-            score += this.tpoShapeBias * (this.weights.tpoShapeWeight || 0.10);
-        }
-
-        // 9. TPO Single Print Positioning
-        if (this.tpoPrintBias !== 0) {
-            score += this.tpoPrintBias * (this.weights.tpoSinglePrintWeight || 0.10);
-        }
-
-        // 10. IB Extension
-        if (this.tpoIBBias !== 0) {
-            score += this.tpoIBBias * (this.weights.tpoIBWeight || 0.08);
+            score += priorScore * (this.weights.priorDayWeight || 0.05);
         }
 
         return Math.max(-1, Math.min(1, score));
@@ -306,23 +266,6 @@ class BiasEngine {
             factors.push({ name: 'Session Delta', value: `Buy ${buyPct}% / Sell ${100 - buyPct}%`, score: buyPct > 55 ? '+' : buyPct < 45 ? '-' : '=' });
         }
 
-        // Clusters
-        factors.push({ name: 'Cluster Balance', value: `${this.bullClustersBelow} bull / ${this.bearClustersAbove} bear`, score: this.bullClustersBelow > this.bearClustersAbove ? '+' : this.bullClustersBelow < this.bearClustersAbove ? '-' : '=' });
-
-        // Prints (webhook-based)
-        factors.push({ name: 'Print Balance', value: `${this.printsAbove} above / ${this.printsBelow} below`, score: this.printsBelow > this.printsAbove ? '+' : this.printsBelow < this.printsAbove ? '-' : '=' });
-
-        // Prior day
-        if (this.priorDayClose && this.priorDayVAH) {
-            const pos = this.priorDayClose > this.priorDayVAH ? 'Above VAH' : this.priorDayClose < this.priorDayVAL ? 'Below VAL' : 'Inside VA';
-            factors.push({ name: 'Prior Close', value: pos, score: this.priorDayClose > this.priorDayVAH ? '+' : this.priorDayClose < this.priorDayVAL ? '-' : '=' });
-        }
-
-        // SMT
-        if (this.smtBullSignals + this.smtBearSignals > 0) {
-            factors.push({ name: 'SMT Signals', value: `${this.smtBullSignals} bull / ${this.smtBearSignals} bear`, score: this.smtBullSignals > this.smtBearSignals ? '+' : '-' });
-        }
-
         // TPO Profile Shape
         if (this.tpoShape && this.tpoShape.shape !== 'none' && this.tpoShape.shape !== 'forming') {
             const shapeScore = this.tpoShapeBias > 0.1 ? '+' : this.tpoShapeBias < -0.1 ? '-' : '=';
@@ -332,13 +275,19 @@ class BiasEngine {
         // TPO Single Prints
         if (this.tpoSinglePrintsAbove + this.tpoSinglePrintsBelow > 0) {
             const spScore = this.tpoPrintBias > 0.1 ? '+' : this.tpoPrintBias < -0.1 ? '-' : '=';
-            factors.push({ name: 'TPO Singles', value: `${this.tpoSinglePrintsAbove} above / ${this.tpoSinglePrintsBelow} below`, score: spScore });
+            factors.push({ name: 'Single Prints', value: `${this.tpoSinglePrintsAbove} above / ${this.tpoSinglePrintsBelow} below`, score: spScore });
         }
 
         // IB Extension
         if (this.ibPosition !== 'forming') {
             const ibScore = this.tpoIBBias > 0.1 ? '+' : this.tpoIBBias < -0.1 ? '-' : '=';
             factors.push({ name: 'IB Extension', value: this.ibPosition, score: ibScore });
+        }
+
+        // Prior day
+        if (this.priorDayClose && this.priorDayVAH) {
+            const pos = this.priorDayClose > this.priorDayVAH ? 'Above VAH' : this.priorDayClose < this.priorDayVAL ? 'Below VAL' : 'Inside VA';
+            factors.push({ name: 'Prior Close', value: pos, score: this.priorDayClose > this.priorDayVAH ? '+' : this.priorDayClose < this.priorDayVAL ? '-' : '=' });
         }
 
         return factors;

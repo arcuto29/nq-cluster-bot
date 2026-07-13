@@ -7,44 +7,33 @@ module.exports = {
     updateInterval: parseInt(process.env.UPDATE_INTERVAL || '30') * 1000,
     timezone: process.env.TIMEZONE || 'America/New_York',
 
-    // Session times (ET) — used by bot for RTH detection
+    // Session times (ET)
     session: {
-        ethStart: '18:00',   // ETH opens 6pm prior day
-        rthStart: '09:30',   // RTH opens 9:30am
-        rthEnd: '16:00',     // RTH closes 4pm
-        ethEnd: '17:00',     // ETH closes 5pm
+        ethStart: '18:00',
+        rthStart: '09:30',
+        rthEnd: '16:00',
+        ethEnd: '17:00',
     },
 
-    // Market sessions for SessionTimer alerts
-    // Each session: { name, emoji, openHour, openMin, closeHour, closeMin, crossesMidnight, color }
-    // Override with custom sessions if needed (otherwise defaults in sessionTimer.js are used)
-    sessions: {
-        // Set to null to use built-in defaults, or provide custom array:
-        // custom: [ { name: 'Asia', emoji: '🇯🇵', openHour: 19, ... } ]
-        custom: null,
-    },
+    // Market session alerts (null = use built-in defaults)
+    sessions: { custom: null },
 
     // TPO (Time Price Opportunity) settings
     tpo: {
-        tickSize: parseFloat(process.env.TPO_TICK_SIZE || '0.25'),   // NQ tick = 0.25
-        periodMinutes: parseInt(process.env.TPO_PERIOD || '30'),      // 30-min TPO periods (standard)
-        minSinglePrintTicks: 2,   // Minimum consecutive single-TPO levels to count as a single print
+        tickSize: parseFloat(process.env.TPO_TICK_SIZE || '0.25'),
+        periodMinutes: parseInt(process.env.TPO_PERIOD || '30'),
+        minSinglePrintTicks: 2,
     },
 
-    // Bias engine weights (total should approximate 1.0)
-    // Original factors
+    // Bias engine weights (total ~1.0)
     bias: {
-        overnightWeight: 0.12,
-        openingDriveWeight: 0.15,
+        overnightWeight: 0.20,
+        openingDriveWeight: 0.18,
         deltaWeight: 0.15,
-        clusterBalanceWeight: 0.12,
-        printBalanceWeight: 0.08,
-        priorDayWeight: 0.08,
-        smtWeight: 0.08,
-        // TPO-derived factors (new)
-        tpoShapeWeight: 0.10,          // b-shape/p-shape contribution
-        tpoSinglePrintWeight: 0.07,    // single print positioning above/below
-        tpoIBWeight: 0.05,             // Initial Balance extension
+        tpoShapeWeight: 0.18,
+        tpoSinglePrintWeight: 0.14,
+        tpoIBWeight: 0.10,
+        priorDayWeight: 0.05,
     },
 
     webhook: {
