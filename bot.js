@@ -234,6 +234,8 @@ function scheduleDailyReset() {
 scheduleDailyReset();
 
 // ==================== LOGIN ====================
+console.log(`[Bot] Token length: ${config.token ? config.token.length : 'MISSING'}`);
+console.log(`[Bot] Token starts with: ${config.token ? config.token.substring(0, 5) + '...' : 'N/A'}`);
 client.login(config.token).catch(err => {
     console.error('[Bot] Login failed:', err.message);
     process.exit(1);
