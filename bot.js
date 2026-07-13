@@ -2,10 +2,13 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const config = require('./config');
 const ClusterStore = require('./clusterStore');
 const BiasEngine = require('./biasEngine');
+const TPOEngine = require('./tpoEngine');
+const SessionTimer = require('./sessionTimer');
 const WebhookServer = require('./webhookServer');
 const { registerCommands } = require('./commands');
 const { buildClusterEmbed, buildBiasEmbed, buildAlertMessage,
-        buildSMTAlert, buildPrintAlert } = require('./embedBuilder');
+        buildSMTAlert, buildPrintAlert, buildTPOSinglePrintAlert,
+        buildSessionAlert, buildTPOEmbed } = require('./embedBuilder');
 
 // ==================== INIT ====================
 const client = new Client({
@@ -14,8 +17,15 @@ const client = new Client({
 
 const store = new ClusterStore(config);
 const bias = new BiasEngine(config);
+const tpo = new TPOEngine(config);
+const sessionTimer = new SessionTimer(config);
+
+// Connect TPO engine to bias engine
+bias.setTPOEngine(tpo);
+
 let embedMessage = null;
 let biasMessage = null;
+let tpoMessage = null;
 let alertChannel = null;
 
 // ==================== BOT READY ====================
@@ -32,19 +42,35 @@ client.once('ready', async () => {
     await sendOrUpdateEmbed();
     await sendOrUpdateBias();
 
+    // Start session timer (market open/close alerts)
+    sessionTimer.start();
 
     // Update loop
     setInterval(async () => {
         store.pruneOld(24);
         await sendOrUpdateEmbed();
         await sendOrUpdateBias();
+        await sendOrUpdateTPO();
     }, config.updateInterval);
 
     console.log(`[Bot] Running. Update every ${config.updateInterval / 1000}s`);
 });
 
 // Register slash commands
-registerCommands(client, store, bias, config);
+registerCommands(client, store, bias, tpo, sessionTimer, config);
+
+// ==================== SESSION TIMER EVENTS ====================
+sessionTimer.on('session', async (event) => {
+    if (!alertChannel) return;
+
+    try {
+        const message = buildSessionAlert(event);
+        await alertChannel.send(message);
+        console.log(`[Session] Alert sent: ${event.session} ${event.type}`);
+    } catch (err) {
+        console.error('[Session] Alert error:', err.message);
+    }
+});
 
 // ==================== EMBED UPDATES ====================
 async function sendOrUpdateEmbed() {
@@ -75,6 +101,21 @@ async function sendOrUpdateBias() {
     }
 }
 
+async function sendOrUpdateTPO() {
+    if (tpo.profile.size === 0) return; // No TPO data yet
+
+    try {
+        const embed = buildTPOEmbed(tpo, bias.currentPrice, config.symbol);
+        if (tpoMessage) {
+            await tpoMessage.edit({ embeds: [embed] });
+        } else {
+            tpoMessage = await alertChannel.send({ embeds: [embed] });
+        }
+    } catch (err) {
+        console.error('[TPO] Embed error:', err.message);
+        tpoMessage = null;
+    }
+}
 
 // ==================== WEBHOOK HANDLERS ====================
 async function handleNewCluster(data) {
@@ -119,6 +160,7 @@ async function handleSMT(data) {
 
 function handlePriceUpdate(price) {
     bias.updatePrice(price);
+    tpo.updatePrice(price);
 
     // Check mitigations
     const mitigated = store.checkMitigation(price);
@@ -132,6 +174,15 @@ function handlePriceUpdate(price) {
         for (const p of filled) {
             alertChannel.send(buildPrintAlert(p, true, store));
         }
+    }
+
+    // Check TPO single print fills
+    const tpoFilled = tpo.checkSinglePrintFills(price);
+    if (tpoFilled.length > 0 && alertChannel) {
+        for (const sp of tpoFilled) {
+            alertChannel.send(buildTPOSinglePrintAlert(sp, true, config.symbol));
+        }
+        console.log(`[-] ${tpoFilled.length} TPO single print(s) filled at ${price}`);
     }
 
     // Update balances for bias
@@ -164,6 +215,69 @@ function handleBiasData(data) {
     }
 }
 
+// ==================== TPO WEBHOOK HANDLERS ====================
+async function handleTPOBar(data) {
+    // Received a completed 30-min TPO bar from TradingView
+    const result = tpo.addPeriodBar(data);
+    console.log(`[TPO] Period ${data.letter} | High: ${data.high} Low: ${data.low}`);
+
+    // Check for newly detected single prints and alert
+    if (result && result.singlePrints && result.singlePrints.length > 0) {
+        const newPrints = result.singlePrints.filter(sp => !sp.alerted);
+        for (const sp of newPrints) {
+            if (alertChannel) {
+                await alertChannel.send(buildTPOSinglePrintAlert(sp, false, config.symbol));
+            }
+            sp.alerted = true;
+        }
+    }
+
+    // Update TPO embed
+    await sendOrUpdateTPO();
+    await sendOrUpdateBias();
+}
+
+async function handleTPOSinglePrint(data) {
+    // Direct single print detection from Pine Script (gap between periods)
+    const sp = {
+        high: parseFloat(data.high),
+        low: parseFloat(data.low),
+        mid: parseFloat(data.mid),
+        letter: data.letter,
+        direction: data.direction, // 'above' or 'below'
+        timestamp: new Date(),
+        filled: false,
+        tickCount: Math.round((parseFloat(data.high) - parseFloat(data.low)) / (config.tpo?.tickSize || 0.25)),
+    };
+
+    // Add to TPO engine's single prints
+    tpo.singlePrints.push(sp);
+    console.log(`[TPO] Single print detected ${sp.direction}: ${sp.low.toFixed(2)} - ${sp.high.toFixed(2)}`);
+
+    if (alertChannel) {
+        await alertChannel.send(buildTPOSinglePrintAlert(sp, false, config.symbol));
+    }
+
+    await sendOrUpdateBias();
+}
+
+function handleTPOReset(data) {
+    // Session open — reset TPO profile
+    console.log('[TPO] Session reset — new profile starting');
+    tpo.reset();
+
+    if (data.rthOpen) {
+        tpo.sessionOpen = parseFloat(data.rthOpen);
+    }
+
+    // Reset the TPO embed
+    tpoMessage = null;
+}
+
+function handleTPOSessionClose(data) {
+    console.log(`[TPO] Session closed. Periods: ${data.periodsCompleted}, Range: ${data.sessionLow}-${data.sessionHigh}`);
+    // Could archive the day's profile here if needed
+}
 
 // ==================== WEBHOOK SERVER ====================
 const webhook = new WebhookServer(config.webhook.port, config.webhook.secret, {
@@ -172,6 +286,10 @@ const webhook = new WebhookServer(config.webhook.port, config.webhook.secret, {
     onSMT: handleSMT,
     onPrice: handlePriceUpdate,
     onBias: handleBiasData,
+    onTPO: handleTPOBar,
+    onTPOSinglePrint: handleTPOSinglePrint,
+    onTPOReset: handleTPOReset,
+    onTPOSessionClose: handleTPOSessionClose,
 });
 webhook.start();
 
@@ -187,8 +305,10 @@ function scheduleDailyReset() {
         console.log('[Bot] Daily reset');
         store.pruneOld(24);
         bias.reset();
+        tpo.reset();
         embedMessage = null;
         biasMessage = null;
+        tpoMessage = null;
         scheduleDailyReset();
     }, ms);
 
@@ -204,6 +324,7 @@ client.login(config.token).catch(err => {
 
 process.on('SIGINT', () => {
     console.log('[Bot] Shutting down...');
+    sessionTimer.stop();
     webhook.stop();
     client.destroy();
     process.exit(0);

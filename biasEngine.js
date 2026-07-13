@@ -3,14 +3,36 @@
  * 
  * Scores from -1 (strong bearish) to +1 (strong bullish)
  * Updated in real-time as new data comes in
+ * 
+ * Factors:
+ * - Overnight positioning (price vs overnight midpoint)
+ * - Opening drive direction (first 15 min)
+ * - Volume delta (buy vs sell aggression)
+ * - Cluster balance (bull clusters below / bear above)
+ * - Print balance (single prints above/below)
+ * - Prior day close vs Value Area
+ * - SMT divergence signals
+ * - TPO profile shape (b/p/D/B)
+ * - TPO single print positioning
+ * - Initial Balance extension
  */
 class BiasEngine {
     constructor(config) {
         this.config = config;
         this.weights = config.bias;
 
+        // Reference to TPO engine (set externally)
+        this.tpoEngine = null;
+
         // Daily tracking data
         this.reset();
+    }
+
+    /**
+     * Set reference to TPO engine for real-time TPO bias data
+     */
+    setTPOEngine(tpoEngine) {
+        this.tpoEngine = tpoEngine;
     }
 
     reset() {
@@ -48,6 +70,15 @@ class BiasEngine {
         // SMT
         this.smtBullSignals = 0;
         this.smtBearSignals = 0;
+
+        // TPO-derived bias data (cached from tpoEngine)
+        this.tpoShapeBias = 0;
+        this.tpoPrintBias = 0;
+        this.tpoIBBias = 0;
+        this.tpoShape = null;
+        this.tpoSinglePrintsAbove = 0;
+        this.tpoSinglePrintsBelow = 0;
+        this.ibPosition = 'forming';
 
         // Current price
         this.currentPrice = 0;
@@ -131,14 +162,42 @@ class BiasEngine {
     }
 
     /**
-     * Update current price
+     * Update current price and refresh TPO bias data
      */
     updatePrice(price) {
         this.currentPrice = price;
+        this._updateTPOBias();
+    }
+
+    /**
+     * Pull latest TPO bias data from the TPO engine
+     */
+    _updateTPOBias() {
+        if (!this.tpoEngine || !this.currentPrice) return;
+
+        try {
+            const tpoBias = this.tpoEngine.getTPOBias(this.currentPrice);
+            
+            // Shape bias
+            this.tpoShape = tpoBias.shape;
+            this.tpoShapeBias = tpoBias.shape.bias || 0;
+
+            // Single print positioning
+            this.tpoPrintBias = tpoBias.printBias.bias || 0;
+            this.tpoSinglePrintsAbove = tpoBias.printBias.above || 0;
+            this.tpoSinglePrintsBelow = tpoBias.printBias.below || 0;
+
+            // IB extension
+            this.tpoIBBias = tpoBias.ibBias.bias || 0;
+            this.ibPosition = tpoBias.ibBias.position || 'forming';
+        } catch (err) {
+            // TPO engine may not have enough data yet
+        }
     }
 
     /**
      * Calculate overall bias score (-1 to +1)
+     * Now includes TPO shape, single print positioning, and IB extension
      */
     calculateBias() {
         let score = 0;
@@ -169,7 +228,7 @@ class BiasEngine {
             score += clusterScore * this.weights.clusterBalanceWeight;
         }
 
-        // 5. Print balance (more prints below = support = bullish)
+        // 5. Print balance (from webhook single prints)
         const totalPrints = this.printsAbove + this.printsBelow;
         if (totalPrints > 0) {
             const printScore = (this.printsBelow - this.printsAbove) / totalPrints;
@@ -190,6 +249,21 @@ class BiasEngine {
         if (totalSMT > 0) {
             const smtScore = (this.smtBullSignals - this.smtBearSignals) / totalSMT;
             score += smtScore * this.weights.smtWeight;
+        }
+
+        // 8. TPO Profile Shape (b-shape bullish, p-shape bearish)
+        if (this.tpoShapeBias !== 0) {
+            score += this.tpoShapeBias * (this.weights.tpoShapeWeight || 0.10);
+        }
+
+        // 9. TPO Single Print Positioning
+        if (this.tpoPrintBias !== 0) {
+            score += this.tpoPrintBias * (this.weights.tpoSinglePrintWeight || 0.10);
+        }
+
+        // 10. IB Extension
+        if (this.tpoIBBias !== 0) {
+            score += this.tpoIBBias * (this.weights.tpoIBWeight || 0.08);
         }
 
         return Math.max(-1, Math.min(1, score));
@@ -235,7 +309,7 @@ class BiasEngine {
         // Clusters
         factors.push({ name: 'Cluster Balance', value: `${this.bullClustersBelow} bull / ${this.bearClustersAbove} bear`, score: this.bullClustersBelow > this.bearClustersAbove ? '+' : this.bullClustersBelow < this.bearClustersAbove ? '-' : '=' });
 
-        // Prints
+        // Prints (webhook-based)
         factors.push({ name: 'Print Balance', value: `${this.printsAbove} above / ${this.printsBelow} below`, score: this.printsBelow > this.printsAbove ? '+' : this.printsBelow < this.printsAbove ? '-' : '=' });
 
         // Prior day
@@ -247,6 +321,24 @@ class BiasEngine {
         // SMT
         if (this.smtBullSignals + this.smtBearSignals > 0) {
             factors.push({ name: 'SMT Signals', value: `${this.smtBullSignals} bull / ${this.smtBearSignals} bear`, score: this.smtBullSignals > this.smtBearSignals ? '+' : '-' });
+        }
+
+        // TPO Profile Shape
+        if (this.tpoShape && this.tpoShape.shape !== 'none' && this.tpoShape.shape !== 'forming') {
+            const shapeScore = this.tpoShapeBias > 0.1 ? '+' : this.tpoShapeBias < -0.1 ? '-' : '=';
+            factors.push({ name: 'TPO Shape', value: this.tpoShape.description || this.tpoShape.shape, score: shapeScore });
+        }
+
+        // TPO Single Prints
+        if (this.tpoSinglePrintsAbove + this.tpoSinglePrintsBelow > 0) {
+            const spScore = this.tpoPrintBias > 0.1 ? '+' : this.tpoPrintBias < -0.1 ? '-' : '=';
+            factors.push({ name: 'TPO Singles', value: `${this.tpoSinglePrintsAbove} above / ${this.tpoSinglePrintsBelow} below`, score: spScore });
+        }
+
+        // IB Extension
+        if (this.ibPosition !== 'forming') {
+            const ibScore = this.tpoIBBias > 0.1 ? '+' : this.tpoIBBias < -0.1 ? '-' : '=';
+            factors.push({ name: 'IB Extension', value: this.ibPosition, score: ibScore });
         }
 
         return factors;
