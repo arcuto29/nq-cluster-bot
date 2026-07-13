@@ -215,13 +215,9 @@ function getSessionTip(session, type) {
             open: '> RTH open — highest volume period begins.\n> Watch IB (first hour) for range context.\n> Opening drive direction often sets the tone.',
             close: '> RTH closed. Regular session complete.\n> Review TPO profile shape for tomorrow\'s bias.',
         },
-        'CME Futures Open': {
-            open: '> Futures market reopened.\n> Watch for gap fills from prior close.',
-            close: '> CME daily maintenance break (5:00-6:00 PM ET).',
-        },
-        'Pre-Market (Equities)': {
-            open: '> Pre-market open. Thin liquidity.\n> Watch for news-driven moves.',
-            close: '> Pre-market ending. RTH opens shortly.',
+        'CME Futures': {
+            open: '> Futures market reopened after maintenance.\n> Watch for gap fills from prior close.\n> Globex session begins.',
+            close: '> CME daily maintenance break.\n> Positions carry into next session.',
         },
     };
     return tips[session]?.[type] || '> Monitor price action around this transition.';

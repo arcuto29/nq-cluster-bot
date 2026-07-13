@@ -1,12 +1,11 @@
 /**
  * SessionTimer — Schedules alerts for market session opens/closes
  * 
- * Sessions tracked (all times in PST / America/Los_Angeles):
+ * Sessions tracked (all times in PST / America/Los_Angeles) — FUTURES ONLY:
  * - Asia (Tokyo):  4:00 PM – 1:00 AM PST
  * - London:        12:00 AM – 9:00 AM PST
  * - New York RTH:  6:30 AM – 1:00 PM PST
- * - CME Futures:   3:00 PM – 2:00 PM PST (next day, nearly 23h)
- * - Pre-Market:    1:00 AM – 6:30 AM PST
+ * - CME Futures:   3:00 PM – 2:00 PM PST (next day, ~23h with 1hr break)
  */
 
 const { EventEmitter } = require('events');
@@ -19,7 +18,7 @@ class SessionTimer extends EventEmitter {
         this.timers = [];
         this.running = false;
 
-        // Define all sessions with their times (PST)
+        // Define all sessions with their times (PST) — futures only
         this.sessions = config.sessions?.custom || [
             {
                 name: 'Asia (Tokyo)',
@@ -46,22 +45,12 @@ class SessionTimer extends EventEmitter {
                 color: 0x66BB6A,             // Green
             },
             {
-                name: 'CME Futures Open',
+                name: 'CME Futures',
                 emoji: '📈',
                 openHour: 15, openMin: 0,    // 3:00 PM PST
                 closeHour: 14, closeMin: 0,  // 2:00 PM PST (next day)
                 crossesMidnight: true,
                 color: 0xAB47BC,             // Purple
-                alertOpenOnly: false,
-            },
-            {
-                name: 'Pre-Market (Equities)',
-                emoji: '🌅',
-                openHour: 1, openMin: 0,     // 1:00 AM PST
-                closeHour: 6, closeMin: 30,  // 6:30 AM PST
-                crossesMidnight: false,
-                color: 0xFFEE58,             // Yellow
-                alertCloseOnly: false,
             },
         ];
 
