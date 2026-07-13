@@ -5,14 +5,14 @@ module.exports = {
     channelId: process.env.CHANNEL_ID,
     symbol: process.env.SYMBOL || 'NQ',
     updateInterval: parseInt(process.env.UPDATE_INTERVAL || '30') * 1000,
-    timezone: process.env.TIMEZONE || 'America/New_York',
+    timezone: process.env.TIMEZONE || 'America/Los_Angeles',
 
-    // Session times (ET)
+    // Session times (PST)
     session: {
-        ethStart: '18:00',
-        rthStart: '09:30',
-        rthEnd: '16:00',
-        ethEnd: '17:00',
+        ethStart: '15:00',   // ETH opens 3pm PST (6pm ET)
+        rthStart: '06:30',   // RTH opens 6:30am PST (9:30am ET)
+        rthEnd: '13:00',     // RTH closes 1pm PST (4pm ET)
+        ethEnd: '14:00',     // ETH closes 2pm PST (5pm ET)
     },
 
     // Market session alerts (null = use built-in defaults)

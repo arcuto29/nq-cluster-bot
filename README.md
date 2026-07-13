@@ -30,13 +30,13 @@ Calculates a -1 to +1 directional bias score:
 ### Market Session Alerts
 Automatic Discord alerts with 5-minute warnings:
 
-| Session | Open (ET) | Close (ET) |
+| Session | Open (PST) | Close (PST) |
 |---------|-----------|------------|
-| Asia (Tokyo) | 7:00 PM | 4:00 AM |
-| London | 3:00 AM | 12:00 PM |
-| New York RTH | 9:30 AM | 4:00 PM |
-| CME Futures | 6:00 PM | 5:00 PM |
-| Pre-Market | 4:00 AM | 9:30 AM |
+| Asia (Tokyo) | 4:00 PM | 1:00 AM |
+| London | 12:00 AM | 9:00 AM |
+| New York RTH | 6:30 AM | 1:00 PM |
+| CME Futures | 3:00 PM | 2:00 PM |
+| Pre-Market | 1:00 AM | 6:30 AM |
 
 
 ## Slash Commands

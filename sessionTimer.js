@@ -1,16 +1,12 @@
 /**
  * SessionTimer — Schedules alerts for market session opens/closes
  * 
- * Sessions tracked (all times in ET / America/New_York):
- * - Asia (Tokyo):  7:00 PM – 4:00 AM ET
- * - London:        3:00 AM – 12:00 PM ET
- * - New York RTH:  9:30 AM – 4:00 PM ET
- * - New York ETH:  6:00 PM – 5:00 PM ET (next day, nearly 23h)
- * 
- * Also tracks:
- * - CME Futures open/close (6:00 PM – 5:00 PM ET with 1hr break)
- * - Equity pre-market (4:00 AM – 9:30 AM ET)
- * - Equity after-hours (4:00 PM – 8:00 PM ET)
+ * Sessions tracked (all times in PST / America/Los_Angeles):
+ * - Asia (Tokyo):  4:00 PM – 1:00 AM PST
+ * - London:        12:00 AM – 9:00 AM PST
+ * - New York RTH:  6:30 AM – 1:00 PM PST
+ * - CME Futures:   3:00 PM – 2:00 PM PST (next day, nearly 23h)
+ * - Pre-Market:    1:00 AM – 6:30 AM PST
  */
 
 const { EventEmitter } = require('events');
@@ -19,41 +15,41 @@ class SessionTimer extends EventEmitter {
     constructor(config) {
         super();
         this.config = config;
-        this.timezone = config.timezone || 'America/New_York';
+        this.timezone = config.timezone || 'America/Los_Angeles';
         this.timers = [];
         this.running = false;
 
-        // Define all sessions with their times (ET)
+        // Define all sessions with their times (PST)
         this.sessions = config.sessions?.custom || [
             {
                 name: 'Asia (Tokyo)',
                 emoji: '🇯🇵',
-                openHour: 19, openMin: 0,    // 7:00 PM ET
-                closeHour: 4, closeMin: 0,   // 4:00 AM ET (next day)
+                openHour: 16, openMin: 0,    // 4:00 PM PST
+                closeHour: 1, closeMin: 0,   // 1:00 AM PST (next day)
                 crossesMidnight: true,
                 color: 0xFFA726,             // Orange
             },
             {
                 name: 'London',
                 emoji: '🇬🇧',
-                openHour: 3, openMin: 0,     // 3:00 AM ET
-                closeHour: 12, closeMin: 0,  // 12:00 PM ET
+                openHour: 0, openMin: 0,     // 12:00 AM PST
+                closeHour: 9, closeMin: 0,   // 9:00 AM PST
                 crossesMidnight: false,
                 color: 0x42A5F5,             // Blue
             },
             {
                 name: 'New York (RTH)',
                 emoji: '🇺🇸',
-                openHour: 9, openMin: 30,    // 9:30 AM ET
-                closeHour: 16, closeMin: 0,  // 4:00 PM ET
+                openHour: 6, openMin: 30,    // 6:30 AM PST
+                closeHour: 13, closeMin: 0,  // 1:00 PM PST
                 crossesMidnight: false,
                 color: 0x66BB6A,             // Green
             },
             {
                 name: 'CME Futures Open',
                 emoji: '📈',
-                openHour: 18, openMin: 0,    // 6:00 PM ET
-                closeHour: 17, closeMin: 0,  // 5:00 PM ET (next day)
+                openHour: 15, openMin: 0,    // 3:00 PM PST
+                closeHour: 14, closeMin: 0,  // 2:00 PM PST (next day)
                 crossesMidnight: true,
                 color: 0xAB47BC,             // Purple
                 alertOpenOnly: false,
@@ -61,11 +57,11 @@ class SessionTimer extends EventEmitter {
             {
                 name: 'Pre-Market (Equities)',
                 emoji: '🌅',
-                openHour: 4, openMin: 0,     // 4:00 AM ET
-                closeHour: 9, closeMin: 30,  // 9:30 AM ET
+                openHour: 1, openMin: 0,     // 1:00 AM PST
+                closeHour: 6, closeMin: 30,  // 6:30 AM PST
                 crossesMidnight: false,
                 color: 0xFFEE58,             // Yellow
-                alertCloseOnly: false,       // Don't alert close (RTH open covers it)
+                alertCloseOnly: false,
             },
         ];
 
@@ -83,9 +79,9 @@ class SessionTimer extends EventEmitter {
         // Re-schedule every hour to handle day transitions
         this._rescheduleInterval = setInterval(() => {
             this._scheduleAllAlerts();
-        }, 60 * 60 * 1000); // Every hour
+        }, 60 * 60 * 1000);
 
-        console.log('[SessionTimer] Started — monitoring market sessions');
+        console.log('[SessionTimer] Started — monitoring market sessions (PST)');
         this._logUpcoming();
     }
 
@@ -115,17 +111,16 @@ class SessionTimer extends EventEmitter {
         this.timers = [];
         this.scheduledAlerts = [];
 
-        const now = this._getNowET();
+        const now = this._getNowLocal();
 
         for (const session of this.sessions) {
-            // Schedule for today and tomorrow
             for (let dayOffset = 0; dayOffset <= 1; dayOffset++) {
                 // Schedule open alert
                 if (!session.alertCloseOnly) {
                     const openTime = this._getSessionTime(session.openHour, session.openMin, dayOffset);
                     const msUntilOpen = openTime.getTime() - now.getTime();
 
-                    if (msUntilOpen > 0 && msUntilOpen < 25 * 60 * 60 * 1000) { // Within 25 hours
+                    if (msUntilOpen > 0 && msUntilOpen < 25 * 60 * 60 * 1000) {
                         const timer = setTimeout(() => {
                             this._fireAlert(session, 'open');
                         }, msUntilOpen);
@@ -137,7 +132,7 @@ class SessionTimer extends EventEmitter {
                             msUntil: msUntilOpen,
                         });
 
-                        // Also fire a 5-min warning
+                        // 5-min warning
                         const warningMs = msUntilOpen - (5 * 60 * 1000);
                         if (warningMs > 0) {
                             const warnTimer = setTimeout(() => {
@@ -152,7 +147,7 @@ class SessionTimer extends EventEmitter {
                 if (!session.alertOpenOnly) {
                     let closeOffset = dayOffset;
                     if (session.crossesMidnight) {
-                        closeOffset = dayOffset + 1; // Close is next day
+                        closeOffset = dayOffset + 1;
                     }
 
                     const closeTime = this._getSessionTime(session.closeHour, session.closeMin, closeOffset);
@@ -183,7 +178,6 @@ class SessionTimer extends EventEmitter {
             }
         }
 
-        // Sort scheduled alerts by time
         this.scheduledAlerts.sort((a, b) => a.msUntil - b.msUntil);
     }
 
@@ -196,7 +190,7 @@ class SessionTimer extends EventEmitter {
         const event = {
             session: session.name,
             emoji: session.emoji,
-            type,  // 'open', 'close', 'warning', 'closing'
+            type,
             color: session.color,
             minutesWarning,
             timestamp: new Date(),
@@ -207,35 +201,32 @@ class SessionTimer extends EventEmitter {
     }
 
     /**
-     * Get current time in ET
+     * Get current time in configured timezone
      */
-    _getNowET() {
+    _getNowLocal() {
         return new Date(new Date().toLocaleString('en-US', { timeZone: this.timezone }));
     }
 
     /**
-     * Get a specific time today (or +dayOffset days) in ET, returned as system Date
+     * Get a specific time today (or +dayOffset days) in configured timezone
      */
     _getSessionTime(hour, minute, dayOffset = 0) {
         const now = new Date();
-        // Get today's date in ET
-        const etNow = new Date(now.toLocaleString('en-US', { timeZone: this.timezone }));
-        
-        // Set the target time in ET
-        const target = new Date(etNow);
+        const localNow = new Date(now.toLocaleString('en-US', { timeZone: this.timezone }));
+
+        const target = new Date(localNow);
         target.setDate(target.getDate() + dayOffset);
         target.setHours(hour, minute, 0, 0);
 
-        // Calculate the offset between ET target and system time
-        const etOffset = target.getTime() - etNow.getTime();
-        return new Date(now.getTime() + etOffset);
+        const localOffset = target.getTime() - localNow.getTime();
+        return new Date(now.getTime() + localOffset);
     }
 
     /**
      * Get current active sessions
      */
     getActiveSessions() {
-        const now = this._getNowET();
+        const now = this._getNowLocal();
         const currentHour = now.getHours();
         const currentMin = now.getMinutes();
         const currentTimeMin = currentHour * 60 + currentMin;
@@ -248,7 +239,6 @@ class SessionTimer extends EventEmitter {
 
             let isActive = false;
             if (session.crossesMidnight) {
-                // Active if after open OR before close
                 isActive = currentTimeMin >= openMin || currentTimeMin < closeMin;
             } else {
                 isActive = currentTimeMin >= openMin && currentTimeMin < closeMin;
@@ -276,7 +266,7 @@ class SessionTimer extends EventEmitter {
             type: a.type,
             time: a.time,
             minutesUntil: Math.round(a.msUntil / 60000),
-            formattedTime: this._formatTimeET(a.time),
+            formattedTime: this._formatTime(a.time),
         }));
     }
 
@@ -288,10 +278,8 @@ class SessionTimer extends EventEmitter {
 
         if (session.crossesMidnight) {
             if (currentTimeMin >= session.openHour * 60 + session.openMin) {
-                // After open, before midnight
                 return (24 * 60 - currentTimeMin) + closeMin;
             } else {
-                // After midnight, before close
                 return closeMin - currentTimeMin;
             }
         }
@@ -301,7 +289,7 @@ class SessionTimer extends EventEmitter {
     /**
      * Format time for display
      */
-    _formatTimeET(date) {
+    _formatTime(date) {
         return new Intl.DateTimeFormat('en-US', {
             timeZone: this.timezone,
             hour: '2-digit',
@@ -314,9 +302,9 @@ class SessionTimer extends EventEmitter {
      * Check if today is a trading day (Mon-Fri)
      */
     isTradingDay() {
-        const now = this._getNowET();
+        const now = this._getNowLocal();
         const day = now.getDay();
-        return day >= 1 && day <= 5; // Monday=1 through Friday=5
+        return day >= 1 && day <= 5;
     }
 
     /**
@@ -330,7 +318,7 @@ class SessionTimer extends EventEmitter {
         }
         console.log('[SessionTimer] Upcoming:');
         for (const u of upcoming) {
-            console.log(`  ${u.session} ${u.type} — ${u.formattedTime} (in ${u.minutesUntil} min)`);
+            console.log(`  ${u.session} ${u.type} — ${u.formattedTime} PST (in ${u.minutesUntil} min)`);
         }
     }
 
@@ -342,7 +330,7 @@ class SessionTimer extends EventEmitter {
         for (const s of this.sessions) {
             const openStr = this._formatHourMin(s.openHour, s.openMin);
             const closeStr = this._formatHourMin(s.closeHour, s.closeMin);
-            lines.push(`${s.emoji} ${s.name}: ${openStr} – ${closeStr} ET`);
+            lines.push(`${s.emoji} ${s.name}: ${openStr} – ${closeStr} PST`);
         }
         return lines.join('\n');
     }
